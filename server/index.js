@@ -1,140 +1,272 @@
 import express from 'express';
 import cors from 'cors';
-import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
 import bcrypt from 'bcryptjs';
-import dotenv from 'dotenv';
-import { Low } from 'lowdb';
-import { JSONFile } from 'lowdb/node';
+import jwt from 'jsonwebtoken';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// ====================
+// CONFIG
+// ====================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 5174;
-const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
+const DB_PATH = path.join(__dirname, 'wplace.json');
+const JWT_SECRET = process.env.JWT_SECRET || 'wplace-secret';
 
-// DB JSON no seu PC
-const adapter = new JSONFile('wplace.json');
-const db = new Low(adapter, { users: [], progress: {}, pixels: {} });
-await db.read();
-db.data ||= { users: [], progress: {}, pixels: {} };
-
-// Helpers auth
-function signToken(user) {
-  return jwt.sign({ uid: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-}
-function auth(req, res, next) {
-  const hdr = req.headers.authorization || '';
-  const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'no_token' });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = { id: payload.uid, email: payload.email };
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'invalid_token' });
-  }
-}
-
-// Curva de XP (igual ao front)
+// Progressão
 const BASE_CAPACITY = 30;
 const CAPACITY_PER_LEVEL = 5;
-function getMaxPixelsAt(lvl) { return BASE_CAPACITY + (lvl - 1) * CAPACITY_PER_LEVEL; }
+const CHUNK_SIZE = 0.01;
+const XP_MULT_BASE = 1.5;
+const XP_MULT_GROWTH = 0.05;
+
+// Pontos e Loja
+const COINS_PER_PIXEL = 1;
+const COINS_PER_LEVEL = 10;
+const SHOP_REFILL_AMOUNT = 5;
+const SHOP_REFILL_COST = 5;
+const SHOP_CAPACITY_STEP = 5;
+const SHOP_CAPACITY_COST = 25;
+
+// ====================
+// DB HELPERS
+// ====================
+function loadDB() {
+  try {
+    const raw = fs.readFileSync(DB_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    data.users ||= [];
+    data.progress ||= {};
+    data.pixels ||= {};
+    migrateDB(data);
+    return data;
+  } catch {
+    const data = { users: [], progress: {}, pixels: {} };
+    migrateDB(data);
+    return data;
+  }
+}
+function migrateDB(dbObj) {
+  for (const uid of Object.keys(dbObj.progress || {})) {
+    const p = dbObj.progress[uid] || {};
+    dbObj.progress[uid] = {
+      level: typeof p.level === 'number' ? p.level : 1,
+      xp: typeof p.xp === 'number' ? p.xp : 0,
+      points: typeof p.points === 'number' ? p.points : 0,
+      extra_capacity: typeof p.extra_capacity === 'number' ? p.extra_capacity : 0,
+    };
+  }
+}
+function saveDB() {
+  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+}
+let db = loadDB();
+
+function ensureProgress(userId) {
+  db.progress[userId] ||= { level: 1, xp: 0, points: 0, extra_capacity: 0 };
+  const p = db.progress[userId];
+  if (typeof p.points !== 'number') p.points = 0;
+  if (typeof p.extra_capacity !== 'number') p.extra_capacity = 0;
+  return p;
+}
+
+function capacityAtLevel(lvl) { return BASE_CAPACITY + (lvl - 1) * CAPACITY_PER_LEVEL; }
 function xpNeededForLevel(lvl) {
-  const cap = getMaxPixelsAt(lvl);
-  const mult = 1.5 + (lvl - 1) * 0.05; // sempre > capacidade
+  const cap = capacityAtLevel(lvl);
+  const mult = XP_MULT_BASE + (lvl - 1) * XP_MULT_GROWTH;
   return Math.ceil(cap * mult);
 }
-function snap(lat, lng) {
-  const p = 20000;
-  const sLat = Math.round(lat * p) / p;
-  const sLng = Math.round(lng * p) / p;
-  return { sLat, sLng, key: `${sLat},${sLng}` };
-}
-const CHUNK_SIZE = 0.01;
-function chunkKeyFromLatLng(lat, lng) {
+function getChunkKey(lat, lng) {
   const chunkLat = Math.floor(lat / CHUNK_SIZE);
   const chunkLng = Math.floor(lng / CHUNK_SIZE);
   return `${chunkLat},${chunkLng}`;
 }
+function isValidHexColor(s) { return typeof s === 'string' && /^#[0-9A-Fa-f]{6}$/.test(s); }
 
-// App
+// ====================
+// AUTH HELPERS
+// ====================
+function signToken(userId) {
+  return jwt.sign({ sub: userId }, JWT_SECRET, { expiresIn: '30d' });
+}
+function auth(req, res, next) {
+  const hdr = req.headers.authorization || '';
+  const [type, token] = hdr.split(' ');
+  if (type !== 'Bearer' || !token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.userId = payload.sub;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// ====================
+// APP
+// ====================
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({ origin: true }));
 app.use(express.json());
 
-// Auth
+// Health
+app.get('/health', (req, res) => res.json({ ok: true }));
+
+// ========== PRESENÇA (SSE) ==========
+const presenceClients = new Set();
+function broadcastPresence() {
+  const data = `data: ${JSON.stringify({ online: presenceClients.size })}\n\n`;
+  for (const res of presenceClients) {
+    try { res.write(data); } catch {}
+  }
+}
+app.get('/presence', (req, res) => res.json({ online: presenceClients.size }));
+app.get('/presence/stream', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.flushHeaders?.();
+  presenceClients.add(res);
+  res.write(`retry: 2000\n\n`);
+  res.write(`data: ${JSON.stringify({ online: presenceClients.size })}\n\n`);
+
+  req.on('close', () => {
+    presenceClients.delete(res);
+    try { res.end(); } catch {}
+    broadcastPresence();
+  });
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+  res.on('close', () => clearInterval(ping));
+  broadcastPresence();
+});
+
+// ====== AUTH ======
 app.post('/auth/register', async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password || password.length < 6) return res.status(400).json({ error: 'invalid_input' });
-  const emailL = String(email).toLowerCase().trim();
-  if (db.data.users.find(u => u.email === emailL)) return res.status(409).json({ error: 'email_exists' });
-  const hash = bcrypt.hashSync(password, 10);
-  const user = { id: String(Date.now()), email: emailL, password_hash: hash };
-  db.data.users.push(user);
-  db.data.progress[user.id] = { level: 1, xp: 0 }; // disponível/recharge ficam no cliente
-  await db.write();
-  return res.json({ token: signToken(user) });
+  if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
+  const exists = db.users.find(u => u.email.toLowerCase() === String(email).toLowerCase());
+  if (exists) return res.status(409).json({ error: 'email_in_use' });
+  const id = String(Date.now());
+  const password_hash = await bcrypt.hash(password, 10);
+  db.users.push({ id, email, password_hash });
+  ensureProgress(id);
+  saveDB();
+  return res.json({ token: signToken(id) });
 });
-
-app.post('/auth/login', (req, res) => {
+app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'invalid_input' });
-  const user = db.data.users.find(u => u.email === String(email).toLowerCase().trim());
+  if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
+  const user = db.users.find(u => u.email.toLowerCase() === String(email).toLowerCase());
   if (!user) return res.status(401).json({ error: 'invalid_credentials' });
-  const ok = bcrypt.compareSync(password, user.password_hash);
+  const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
-  return res.json({ token: signToken(user) });
+  return res.json({ token: signToken(user.id) });
 });
-
 app.get('/auth/me', auth, (req, res) => {
-  const prog = db.data.progress[req.user.id] || { level: 1, xp: 0 };
-  return res.json({ id: req.user.id, email: req.user.email, progress: prog });
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'invalid_user' });
+  const prog = ensureProgress(user.id);
+  return res.json({
+    email: user.email,
+    progress: {
+      level: prog.level,
+      xp: prog.xp,
+      points: prog.points || 0,
+      extra_capacity: prog.extra_capacity || 0,
+    }
+  });
 });
 
-// Chunk (leitura)
-app.get('/chunk/:key', async (req, res) => {
-  const key = String(req.params.key || '');
-  const pixelsByChunk = db.data.pixels[key] || {};
-  return res.json({ chunkKey: key, pixels: pixelsByChunk });
+// ====== PIXELS ======
+app.get('/chunk/:key', (req, res) => {
+  const key = String(req.params.key);
+  const pixels = db.pixels[key] || {};
+  return res.json({ pixels });
 });
 
-// Commit (grava pixels + XP)
-app.post('/commit', auth, async (req, res) => {
-  const pixels = Array.isArray(req.body?.pixels) ? req.body.pixels : [];
-  if (pixels.length === 0) return res.status(400).json({ error: 'empty' });
+app.post('/commit', auth, (req, res) => {
+  const { pixels } = req.body || {};
+  if (!Array.isArray(pixels)) return res.status(400).json({ error: 'invalid_payload' });
+
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'invalid_user' });
+  const prog = ensureProgress(user.id);
+
+  const unique = new Map(); // key -> color
+  for (const p of pixels) {
+    if (!p || typeof p.key !== 'string' || !isValidHexColor(p.color)) continue;
+    const parts = p.key.split(',');
+    if (parts.length !== 2) continue;
+    const lat = Number(parts[0]);
+    const lng = Number(parts[1]);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    unique.set(p.key, p.color);
+  }
 
   let count = 0;
-  for (const p of pixels) {
-    let key = p.key;
-    let lat, lng;
-    if (key) {
-      const parts = key.split(',').map(Number);
-      lat = parts[0]; lng = parts[1];
-    } else {
-      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
-      ({ sLat: lat, sLng: lng, key } = snap(p.lat, p.lng));
-    }
-    if (!/^#[0-9A-Fa-f]{6}$/.test(p.color || '')) continue;
-
-    const ck = chunkKeyFromLatLng(lat, lng);
-    db.data.pixels[ck] ||= {};
-    db.data.pixels[ck][key] = p.color;
+  for (const [key, color] of unique.entries()) {
+    const [lat, lng] = key.split(',').map(Number);
+    const ck = getChunkKey(lat, lng);
+    db.pixels[ck] ||= {};
+    db.pixels[ck][key] = color;
     count++;
   }
 
-  // XP
-  const prog = db.data.progress[req.user.id] || { level: 1, xp: 0 };
-  let { level, xp } = prog;
-  xp += count;
-  while (xp >= xpNeededForLevel(level)) {
-    xp -= xpNeededForLevel(level);
-    level++;
-  }
-  db.data.progress[req.user.id] = { level, xp };
-  await db.write();
+  const prevLevel = prog.level;
 
-  return res.json({ ok: true, count, level, xp });
+  // XP e level up
+  prog.xp += count;
+  while (prog.xp >= xpNeededForLevel(prog.level)) {
+    prog.xp -= xpNeededForLevel(prog.level);
+    prog.level++;
+  }
+
+  // Pontos
+  prog.points ||= 0;
+  prog.points += count * COINS_PER_PIXEL;
+  if (prog.level > prevLevel) {
+    prog.points += (prog.level - prevLevel) * COINS_PER_LEVEL;
+  }
+
+  saveDB();
+  return res.json({
+    count,
+    level: prog.level,
+    xp: prog.xp,
+    points: prog.points,
+    extra_capacity: prog.extra_capacity || 0
+  });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`API on http://0.0.0.0:${PORT}`);
+// ====== LOJA ======
+app.post('/shop/refill', auth, (req, res) => {
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'invalid_user' });
+  const prog = ensureProgress(user.id);
+  prog.points ||= 0;
+  if (prog.points < SHOP_REFILL_COST) return res.status(400).json({ error: 'insufficient_points' });
+  prog.points -= SHOP_REFILL_COST;
+  saveDB();
+  return res.json({ ok: true, points: prog.points, amount: SHOP_REFILL_AMOUNT });
+});
+app.post('/shop/capacity', auth, (req, res) => {
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(401).json({ error: 'invalid_user' });
+  const prog = ensureProgress(user.id);
+  prog.points ||= 0;
+  if (prog.points < SHOP_CAPACITY_COST) return res.status(400).json({ error: 'insufficient_points' });
+  prog.points -= SHOP_CAPACITY_COST;
+  prog.extra_capacity = (prog.extra_capacity || 0) + SHOP_CAPACITY_STEP;
+  saveDB();
+  return res.json({ ok: true, points: prog.points, extra_capacity: prog.extra_capacity });
+});
+
+app.listen(PORT, () => {
+  console.log(`WPlace API running on http://localhost:${PORT}`);
 });
