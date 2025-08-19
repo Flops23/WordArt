@@ -26,10 +26,13 @@ const XP_MULT_GROWTH = 0.05;
 // Pontos e Loja
 const COINS_PER_PIXEL = 1;
 const COINS_PER_LEVEL = 10;
-const SHOP_REFILL_AMOUNT = 5;
-const SHOP_REFILL_COST = 5;
-const SHOP_CAPACITY_STEP = 5;
-const SHOP_CAPACITY_COST = 25;
+
+// NOVOS VALORES
+const SHOP_REFILL_AMOUNT = 30; // +30 de tinta por compra
+const SHOP_REFILL_COST = 500;  // custa 500 pontos
+
+const SHOP_CAPACITY_STEP = 5;  // +5 de limite por compra
+const SHOP_CAPACITY_COST = 500; // custa 500 pontos
 
 // ====================
 // DB HELPERS

@@ -383,6 +383,31 @@ body, html {
 
   #coordsInfo { display: none; }
 }
+
+/* Centralizar LOJA no centro (PC e mobile) */
+#shopModal[aria-hidden="false"] {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+#shopPanel {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  left: auto !important;
+  bottom: auto !important;
+  margin: 0 12px;
+  width: min(92vw, 420px);
+  max-height: 90vh;
+}
+
+@media (max-width: 480px) {
+  #shopPanel {
+    width: min(94vw, 360px);
+    max-height: 86vh;
+  }
+}
   </style>
 </head>
 <body>
@@ -508,14 +533,14 @@ body, html {
         <div class="shop-balance">⭐ Pontos: <strong id="shopPoints">0</strong></div>
         <div class="shop-items">
           <div class="shop-item">
-            <div class="shop-item-title">Comprar Tinta (+5)</div>
-            <div class="shop-item-desc" id="shopRefillDesc">Adiciona +5 pixels agora. Custa 5 pontos.</div>
-            <button id="buyRefillBtn" class="shop-buy">Comprar por 5</button>
+            <div class="shop-item-title">Comprar Tinta</div>
+            <div class="shop-item-desc" id="shopRefillDesc">Adiciona +30 pixels</div>
+            <button id="buyRefillBtn" class="shop-buy">500</button>
           </div>
           <div class="shop-item">
-            <div class="shop-item-title">Aumentar Limite (+5)</div>
-            <div class="shop-item-desc" id="shopCapDesc">Aumenta permanentemente seu limite em +5. Custa 25 pontos.</div>
-            <button id="buyCapBtn" class="shop-buy">Comprar por 25</button>
+            <div class="shop-item-title">Aumentar Limite</div>
+            <div class="shop-item-desc" id="shopCapDesc">Aumenta limite +5</div>
+            <button id="buyCapBtn" class="shop-buy">500</button>
           </div>
         </div>
       </div>
@@ -609,8 +634,8 @@ let rechargeTimer = parseInt(localStorage.getItem('wplace_recharge') || RECHARGE
 
 // Grid
 const GRID_PRECISION = 20000;
-const MIN_ZOOM_TO_LOAD = 16;
-const MIN_ZOOM_TO_DRAW = 18;
+const MIN_ZOOM_TO_LOAD = 15;
+const MIN_ZOOM_TO_DRAW = 16;
 const CHUNK_SIZE = 0.01;
 
 // Estados
@@ -836,7 +861,7 @@ function updateUI() {
     } else {
       elements.paintButton.disabled = true;
       if (availablePixels <= 0) elements.paintButton.textContent = `Aguarde ${rechargeTimer}s`;
-      else if (map.getZoom() < MIN_ZOOM_TO_DRAW) elements.paintButton.textContent = `Zoom ${MIN_ZOOM_TO_DRAW}+ para desenhar`;
+      else if (map.getZoom() < MIN_ZOOM_TO_DRAW) elements.paintButton.textContent = `Zoom  para desenhar`;
     }
   }
 
@@ -1205,10 +1230,10 @@ document.addEventListener('keyup', (e) => { if (e.code === 'Space') { spaceHeld 
 elements.toggleEraser.addEventListener('click', () => { manualEraser = !manualEraser; eraserMode = manualEraser || spaceHeld; syncEraserUI(); });
 
 // ====== LOJA ======
-const SHOP_REFILL_AMOUNT = 5;
-const SHOP_REFILL_COST = 5;
+const SHOP_REFILL_AMOUNT = 30;
+const SHOP_REFILL_COST = 500;
 const SHOP_CAPACITY_STEP = 5;
-const SHOP_CAPACITY_COST = 25;
+const SHOP_CAPACITY_COST = 500;
 
 function openShop() {
   elements.shopModal.style.display = 'block';
@@ -1221,37 +1246,56 @@ function closeShop() {
 }
 function updateShopUI() {
   if (!elements.shopModal || elements.shopModal.style.display !== 'block') return;
-  elements.shopPoints.textContent = points;
-  elements.pointsCount.textContent = points;
+
+  // Atualiza títulos e descrições
+  const titles = document.querySelectorAll('#shopContent .shop-item-title');
+  if (titles[0]) titles[0].textContent = `Comprar Tinta (+${SHOP_REFILL_AMOUNT})`;
+  if (titles[1]) titles[1].textContent = `Aumentar Limite (+${SHOP_CAPACITY_STEP})`;
+
   elements.shopRefillDesc.textContent = `Adiciona +${SHOP_REFILL_AMOUNT} pixels agora. Custa ${SHOP_REFILL_COST} ponto${SHOP_REFILL_COST > 1 ? 's' : ''}.`;
   elements.shopCapDesc.textContent = `Aumenta permanentemente seu limite em +${SHOP_CAPACITY_STEP}. Custa ${SHOP_CAPACITY_COST} ponto${SHOP_CAPACITY_COST > 1 ? 's' : ''}.`;
+
+  // Atualiza texto dos botões
+  elements.buyRefillBtn.textContent = ` ${SHOP_REFILL_COST}`;
+  elements.buyCapBtn.textContent = ` ${SHOP_CAPACITY_COST}`;
+
+  // Estado dos botões
   const atMax = availablePixels >= getMaxPixels();
   const canBuy = isLoggedIn();
   elements.buyRefillBtn.disabled = !canBuy || points < SHOP_REFILL_COST || atMax;
   elements.buyCapBtn.disabled = !canBuy || points < SHOP_CAPACITY_COST;
 }
+
 async function buyRefill() {
   try {
     const res = await apiRequest('/shop/refill', { method:'POST', auth:true });
     const amount = res.amount ?? SHOP_REFILL_AMOUNT;
     points = res.points ?? points;
     availablePixels = Math.min(getMaxPixels(), availablePixels + amount);
-    saveProgress(); updateUI(); updateShopUI();
+    saveProgress();
+    updateUI();
+    updateShopUI();
     showToast(`+${amount} de tinta adicionada!`, '#00b894');
   } catch (e) {
-    alert('Não foi possível comprar tinta.'); console.error(e);
+    alert('Não foi possível comprar tinta.');
+    console.error(e);
   }
 }
 async function buyCapacity() {
   try {
     const res = await apiRequest('/shop/capacity', { method:'POST', auth:true });
     points = res.points ?? points;
-    if (typeof res.extra_capacity === 'number') extraCapacity = res.extra_capacity;
+    if (typeof res.extra_capacity === 'number') {
+      extraCapacity = res.extra_capacity;
+    }
     availablePixels = Math.min(availablePixels, getMaxPixels());
-    saveProgress(); updateUI(); updateShopUI();
+    saveProgress();
+    updateUI();
+    updateShopUI();
     showToast(`Limite aumentado em +${SHOP_CAPACITY_STEP}! 🎯`, '#6a11cb');
   } catch (e) {
-    alert('Não foi possível aumentar o limite.'); console.error(e);
+    alert('Não foi possível aumentar o limite.');
+    console.error(e);
   }
 }
 elements.shopFab.addEventListener('click', openShop);
