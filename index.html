@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WPlace - Paint the World</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+
+  <style>
+    * { box-sizing: border-box; }
+:root { --header-h: 60px; }
+
+body, html {
+  margin: 0; padding: 0; height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  background-color: #1a1a1b;
+}
+#map { width: 100%; height: 100%; }
+
+#pixelCanvas {
+  pointer-events: none;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* HEADER */
+#header {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
+  background: linear-gradient(135deg, #ff4500, #ff6b35);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+.logo { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 700; font-size: 18px; }
+.logo-icon {
+  width: 30px; height: 30px; background: #fff; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.header-stats { display: flex; gap: 16px; color: #fff; font-size: 13px; font-weight: 500; }
+.stat-item { display: flex; align-items: center; gap: 6px; }
+
+/* AUTH AREA (header) */
+#authArea { display: flex; align-items: center; gap: 8px; }
+#authArea button { padding: 6px 10px; border: none; border-radius: 8px; cursor: pointer; }
+#loginBtn { background: #343a40; color: #fff; }
+#logoutBtn { background: #dc3545; color: #fff; }
+#userEmail { color: #fff; font-size: 13px; }
+
+/* TOP BAR da paleta (mobile) */
+#mobilePaletteBar { display: none; }
+@media (max-width: 768px) {
+  #mobilePaletteBar {
+    position: fixed;
+    top: var(--header-h);
+    left: 0; right: 0;
+    background: #fff;
+    border-bottom: 1px solid #e5e5e5;
+    z-index: 1001;
+    padding: 6px 8px;
+    display: none;
+  }
+  #mobilePaletteBar .color-palette {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(3, 32px);
+    grid-auto-columns: max-content;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  #mobilePaletteBar .color-swatch { width: 32px; height: 32px; }
+}
+
+/* SIDEBAR (player) */
+#sidebar {
+  position: fixed; top: var(--header-h); right: 0; width: 300px; height: calc(100vh - var(--header-h));
+  background: #fff; box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+  z-index: 1000; display: flex; flex-direction: column; overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.sidebar-section { padding: 16px; border-bottom: 1px solid #e5e5e5; }
+.section-title { font-weight: 600; font-size: 15px; color: #1a1a1b; margin-bottom: 10px; }
+
+/* LEVEL */
+.level-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color:#1a1a1b; font-size: 14px; }
+.xp-bar { width: 100%; height: 8px; background: #f1f3f5; border-radius: 999px; overflow: hidden; }
+.xp-fill { height: 100%; width: 0%; transition: width 0.3s ease; background: linear-gradient(90deg, #6a11cb, #2575fc); }
+.level-note { color:#6c757d; font-size: 11px; display:block; margin-top: 6px; }
+
+/* TINTA */
+.pixel-timer {
+  background: linear-gradient(135deg, #00d4aa, #00b894);
+  border-radius: 12px; padding: 12px; color: #fff; text-align: center;
+}
+.pixel-count { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+.pixel-label { font-size: 11px; opacity: 0.9; }
+.timer-bar { width: 100%; height: 6px; background: rgba(255,255,255,0.3); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.timer-fill { height: 100%; background: #fff; transition: width 1s ease; border-radius: 3px; }
+
+/* PALETA (desktop) */
+.color-palette {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px; margin-top: 6px;
+}
+.color-swatch {
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;
+  border: 2px solid transparent; position: relative;
+}
+.color-swatch:hover { transform: scale(1.08); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.color-swatch.selected {
+  border-color: #ff4500; transform: scale(1.08);
+  box-shadow: 0 0 0 3px rgba(255,69,0,0.3);
+}
+.color-swatch::after {
+  content: '✓'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: white; font-weight: bold; font-size: 11px; opacity: 0; transition: opacity 0.2s;
+}
+.color-swatch.selected::after { opacity: 1; }
+
+/* BOTÕES */
+.paint-section { text-align: center; }
+#paintButton {
+  width: 100%; padding: 12px; background: linear-gradient(135deg, #ff4500, #ff6b35);
+  color: #fff; border: none; border-radius: 12px; font-weight: 600; font-size: 15px; cursor: pointer;
+  transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(255,69,0,0.3);
+}
+#paintButton:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255,69,0,0.35); }
+#paintButton:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; }
+#cancelButton { width: 100%; padding: 10px; border: none; border-radius: 10px; color: #fff; cursor: pointer; background:#dc3545; margin-top:8px; display:none; font-size: 14px; }
+#cancelButton:hover { filter: brightness(0.95); }
+
+/* LOADING */
+.loading {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+  z-index: 2000; text-align: center; font-size: 14px;
+}
+.spinner {
+  width: 28px; height: 28px; border: 3px solid #f3f3f3; border-top: 3px solid #ff4500; border-radius: 50%;
+  animation: spin 1s linear infinite; margin: 0 auto 10px;
+}
+@keyframes spin { 0%{ transform: rotate(0deg);} 100%{ transform: rotate(360deg);} }
+
+/* EFEITOS */
+@keyframes clickPulse { 0%{transform:translate(-50%, -50%) scale(0.5);opacity:1;} 50%{transform:translate(-50%, -50%) scale(1.2);opacity:0.8;} 100%{transform:translate(-50%, -50%) scale(1);opacity:0.6;} }
+@keyframes eraseEffect { 0%{transform:translate(-50%,-50%) scale(0.8);opacity:1;} 50%{transform:translate(-50%,-50%) scale(1.1);opacity:0.9;} 100%{transform:translate(-50%,-50%) scale(0.5);opacity:0;} }
+
+/* LEAFLET touch handling */
+.leaflet-container { touch-action: pan-x pan-y; }
+
+/* Borracha: azul OFF, verde ON */
+#toggleEraser { background: #1e90ff; color: #fff; border: none; }
+#toggleEraser.on { background: #2ecc71; }
+
+/* Mobile ajustes padrão */
+@media (max-width: 768px) {
+  #sidebar { width: 100%; height: auto; top: auto; bottom: 0; max-height: 48vh; }
+  .header-stats { display: none; }
+  #paletteSection { display: none; }
+
+  .color-swatch { width: 32px; height: 32px; }
+  #paintButton, #cancelButton, #toggleEraser { padding: 12px; font-size: 14px; }
+
+  #toggleEraser {
+    position: fixed;
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    z-index: 1100;
+    padding: 12px 14px;
+    font-size: 14px;
+    border-radius: 999px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  }
+  #toggleEraser.on { box-shadow: 0 8px 20px rgba(46, 204, 113, 0.45); }
+}
+
+/* COORDS (debug) */
+#coordsInfo {
+  position: fixed; bottom: 10px; left: 10px;
+  background: rgba(26,26,27,0.85); color: #fff; padding: 8px 10px; border-radius: 8px;
+  font-family: Monaco, Consolas, monospace; font-size: 12px; z-index: 1000;
+}
+
+/* HELP FAB */
+#helpFab {
+  position: fixed;
+  left: 16px;
+  top: calc(var(--header-h) + 12px);
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: #343a40;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 22px; cursor: pointer; z-index: 1100;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+  border: 2px solid rgba(255,255,255,0.08);
+  user-select: none;
+}
+#helpFab:hover { filter: brightness(1.05); }
+@media (max-width: 768px) {
+  #helpFab { width: 44px; height: 44px; font-size: 20px; }
+}
+
+#helpModal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; z-index: 1200;
+}
+#helpPanel {
+  position: absolute; top: calc(var(--header-h) + 12px); right: 12px;
+  width: min(92vw, 420px); max-height: calc(100vh - var(--header-h) - 24px);
+  overflow: auto; background: #fff; color: #1a1a1b; border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,0.25); padding: 16px;
+}
+#helpHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#helpTitle { font-weight: 700; font-size: 16px; }
+#helpClose {
+  width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px; background: #f1f3f5;
+}
+#helpContent { font-size: 13px; line-height: 1.4; }
+#helpContent h4 { margin: 12px 0 6px; font-size: 14px; }
+#helpContent ul { margin: 6px 0 10px 18px; padding: 0; }
+#helpContent li { margin: 4px 0; }
+.helpStat { display: inline-block; background:#f8f9fa; padding:2px 6px; border-radius:6px; font-weight:600; }
+
+/* AUTH MODAL */
+#authModal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display:none; z-index: 2000; align-items:center; justify-content:center; }
+.auth-card { background:#fff; padding:16px; border-radius:12px; width:min(92vw,380px) }
+.auth-tabs { display:flex; gap:8px; margin-bottom:8px }
+.auth-tabs button { flex:1; padding:8px; border-radius:8px; border:1px solid #dee2e6; background:#fff; cursor:pointer }
+.auth-tabs .active { background:#e9ecef }
+.auth-input { width:100%;padding:10px;margin-bottom:8px;border:1px solid #dee2e6;border-radius:8px }
+.auth-submit { width:100%;padding:10px;border:none;border-radius:8px;background:#343a40;color:#fff;cursor:pointer }
+.auth-submit.reg { background:#ff6b35 }
+
+/* SHOP FAB + MODAL */
+#shopFab {
+  position: fixed;
+  left: 16px;
+  top: calc(var(--header-h) + 70px);
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: #ff6b35;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 22px; cursor: pointer; z-index: 1100;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+  border: 2px solid rgba(255,255,255,0.08);
+  user-select: none;
+}
+#shopFab:hover { filter: brightness(1.05); }
+@media (max-width: 768px) {
+  #shopFab { width: 44px; height: 44px; font-size: 20px; }
+}
+
+#shopModal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; z-index: 1200;
+}
+#shopPanel {
+  position: absolute; top: calc(var(--header-h) + 12px); right: 12px;
+  width: min(92vw, 420px); max-height: calc(100vh - var(--header-h) - 24px);
+  overflow: auto; background: #fff; color: #1a1a1b; border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25); padding: 16px;
+}
+#shopHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+#shopTitle { font-weight: 700; font-size: 16px; }
+#shopClose {
+  width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px; background: #f1f3f5;
+}
+#shopContent { font-size: 13px; line-height: 1.4; }
+.shop-balance {
+  display: inline-flex; align-items: center; gap: 6px;
+  background:#f8f9fa; padding:6px 10px; border-radius:8px; font-weight:700; margin-bottom: 10px;
+}
+.shop-items { display: grid; gap: 12px; }
+.shop-item {
+  border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px;
+  display: grid; gap: 8px; background: #fff;
+}
+.shop-item-title { font-weight: 700; }
+.shop-item-desc { color: #6c757d; }
+.shop-buy {
+  justify-self: start;
+  padding: 8px 12px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, #ff6b35, #ff4500);
+  color:#fff; font-weight:600; cursor:pointer;
+  box-shadow: 0 4px 12px rgba(255,69,0,0.3);
+}
+.shop-buy:disabled { background:#ccc; cursor:not-allowed; box-shadow: none; }
+
+@media (max-width: 480px) {
+  #shopPanel { width: min(94vw, 360px); padding: 12px; }
+  #shopTitle { font-size: 15px; }
+  #shopClose { width: 28px; height: 28px; font-size: 16px; }
+  #shopContent { font-size: 12px; }
+}
+
+/* ===================== */
+/* COMPACTAR UI EM CELULARES */
+/* ===================== */
+@media (max-width: 480px) {
+  :root { --header-h: 52px; }
+  #header { padding: 0 12px; }
+  .logo { gap: 8px; font-size: 16px; }
+  .logo-icon { width: 26px; height: 26px; font-size: 15px; }
+  .header-stats { gap: 10px; font-size: 12px; }
+
+  #mobilePaletteBar { padding: 5px 6px; }
+  #mobilePaletteBar .color-palette {
+    grid-template-rows: repeat(3, 28px);
+    gap: 5px;
+    padding-bottom: 3px;
+  }
+  #mobilePaletteBar .color-swatch { width: 28px; height: 28px; }
+
+  #sidebar { max-height: 46vh; }
+  .sidebar-section { padding: 12px; }
+  .section-title { font-size: 14px; margin-bottom: 8px; }
+
+  .pixel-timer { padding: 10px; }
+  .pixel-count { font-size: 18px; margin-bottom: 2px; }
+  .pixel-label { font-size: 10px; }
+  .timer-bar { height: 5px; }
+
+  .color-palette { gap: 6px; }
+  .color-swatch { width: 26px; height: 26px; }
+
+  #paintButton { padding: 10px; font-size: 13px; }
+  #cancelButton { padding: 9px; font-size: 13px; }
+  #toggleEraser {
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  #helpFab { width: 40px; height: 40px; font-size: 18px; }
+  #coordsInfo { font-size: 11px; padding: 6px 8px; bottom: 8px; left: 8px; }
+
+  #helpPanel { width: min(94vw, 360px); padding: 12px; }
+  #helpTitle { font-size: 15px; }
+  #helpClose { width: 28px; height: 28px; font-size: 16px; }
+  #helpContent { font-size: 12px; }
+  #helpContent h4 { font-size: 13px; margin: 10px 0 6px; }
+
+  .auth-card { width: min(94vw, 340px); padding: 14px; }
+  .auth-input { padding: 8px; font-size: 14px; }
+  .auth-submit { padding: 9px; font-size: 14px; }
+
+  .leaflet-control-zoom a {
+    width: 32px; height: 32px; line-height: 32px; font-size: 18px;
+  }
+}
+
+@media (max-width: 360px) {
+  :root { --header-h: 46px; }
+
+  .logo { font-size: 15px; }
+  .logo-icon { width: 24px; height: 24px; font-size: 14px; }
+
+  #mobilePaletteBar .color-palette { grid-template-rows: repeat(3, 24px); gap: 4px; }
+  #mobilePaletteBar .color-swatch { width: 24px; height: 24px; }
+
+  .color-swatch { width: 24px; height: 24px; }
+
+  .pixel-count { font-size: 16px; }
+  .timer-bar { height: 4px; }
+
+  #paintButton, #cancelButton { padding: 9px; font-size: 12px; }
+  #toggleEraser { padding: 9px 11px; font-size: 12px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+
+  #helpFab { width: 36px; height: 36px; font-size: 16px; }
+
+  .leaflet-control-zoom a {
+    width: 28px; height: 28px; line-height: 28px; font-size: 16px;
+  }
+
+  #coordsInfo { display: none; }
+}
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    <div>Carregando WPlace...</div>
+  </div>
+
+  <div id="header">
+    <div class="logo">
+      <div class="logo-icon">🎨</div>
+      <div>WPlace</div>
+    </div>
+    <div class="header-stats">
+      <div class="stat-item"><span>🌍</span><span>Paint the World</span></div>
+      <div class="stat-item"><span>⭐</span><span id="pointsCount">0</span></div>
+      <div class="stat-item"><span>👥</span><span id="userCount">1</span></div>
+    </div>
+    <div id="authArea">
+      <button id="loginBtn">Entrar</button>
+      <div id="userMenu" style="display:none;align-items:center;gap:6px">
+        <span id="userEmail"></span>
+      <button id="logoutBtn">Sair</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mobilePaletteBar"></div>
+
+  <div id="map"></div>
+
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <div class="section-title">Seu nível</div>
+      <div class="level-card">
+        <div class="level-row">
+          <span>Nível: <strong id="levelValue">1</strong></span>
+          <span id="xpText">0/45 XP</span>
+        </div>
+        <div class="xp-bar"><div class="xp-fill" id="xpFill"></div></div>
+        <small class="level-note">A cada nível: +5 capacidade de tinta</small>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="pixel-timer">
+        <div class="pixel-count" id="pixelCount">30/30</div>
+        <div class="pixel-label">pixels disponíveis</div>
+        <div class="timer-bar"><div class="timer-fill" id="timerFill"></div></div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="paletteSection">
+      <div class="section-title">Escolha uma cor</div>
+      <div class="color-palette" id="colorPalette"></div>
+    </div>
+
+    <div class="sidebar-section paint-section">
+      <button id="paintButton">Começar a Desenhar</button>
+      <button id="cancelButton">Cancelar</button>
+      <button id="toggleEraser" class="util-btn" style="display:none">
+        🧽 Borracha: OFF
+      </button>
+    </div>
+  </div>
+
+  <div id="coordsInfo">Lat: 0, Lng: 0</div>
+
+  <button id="helpFab" aria-label="Ajuda">!</button>
+  <div id="helpModal" aria-hidden="true">
+    <div id="helpPanel" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div id="helpHeader">
+        <div id="helpTitle">Como funciona</div>
+        <button id="helpClose" aria-label="Fechar">✕</button>
+      </div>
+      <div id="helpContent">
+        <h4>Objetivo</h4>
+        <ul>
+          <li>Pinte o mapa com pixels. Cada pixel confirmado vale <strong>1 XP</strong>.</li>
+        </ul>
+
+        <h4>Tinta</h4>
+        <ul>
+          <li>Capacidade: <span class="helpStat" id="helpCapNow">30</span></li>
+          <li>Disponível: <span class="helpStat" id="helpInkNow">30</span></li>
+          <li>Recarga: <span class="helpStat">+1 a cada 5s</span></li>
+        </ul>
+
+        <h4>Nível e XP</h4>
+        <ul>
+          <li>Nível: <span class="helpStat" id="helpLevel">1</span></li>
+          <li>XP: <span class="helpStat" id="helpXp">0</span>/<span class="helpStat" id="helpXpNeed">45</span></li>
+          <li>A cada nível: <strong>+5</strong> de capacidade.</li>
+          <li>XP para subir é sempre maior que sua capacidade atual.</li>
+        </ul>
+
+        <h4>Controles (Desktop)</h4>
+        <ul>
+          <li>Botão esquerdo: desenhar (arrastar).</li>
+          <li>Botão direito: mover o mapa.</li>
+          <li>Espaço: segure para ativar a borracha.</li>
+        </ul>
+
+        <h4>Controles (Mobile)</h4>
+        <ul>
+          <li>1 dedo: desenhar (arrastar).</li>
+          <li>2 dedos: mover e dar zoom.</li>
+          <li>Botão 🧽: alterna borracha (OFF azul / ON verde).</li>
+          <li>Paleta: no topo (3 linhas). Some quando sair do modo desenho.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <button id="shopFab" aria-label="Loja">🛒</button>
+  <div id="shopModal" aria-hidden="true">
+    <div id="shopPanel" role="dialog" aria-modal="true" aria-labelledby="shopTitle">
+      <div id="shopHeader">
+        <div id="shopTitle">Loja</div>
+        <button id="shopClose" aria-label="Fechar">✕</button>
+      </div>
+      <div id="shopContent">
+        <div class="shop-balance">⭐ Pontos: <strong id="shopPoints">0</strong></div>
+        <div class="shop-items">
+          <div class="shop-item">
+            <div class="shop-item-title">Comprar Tinta (+5)</div>
+            <div class="shop-item-desc" id="shopRefillDesc">Adiciona +5 pixels agora. Custa 5 pontos.</div>
+            <button id="buyRefillBtn" class="shop-buy">Comprar por 5</button>
+          </div>
+          <div class="shop-item">
+            <div class="shop-item-title">Aumentar Limite (+5)</div>
+            <div class="shop-item-desc" id="shopCapDesc">Aumenta permanentemente seu limite em +5. Custa 25 pontos.</div>
+            <button id="buyCapBtn" class="shop-buy">Comprar por 25</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="authModal">
+    <div class="auth-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>Entrar</strong>
+        <button id="authClose" style="border:none;background:#f1f3f5;border-radius:50%;width:28px;height:28px;cursor:pointer">✕</button>
+      </div>
+      <div class="auth-tabs">
+        <button id="authTabLogin" class="active">Login</button>
+        <button id="authTabReg">Registrar</button>
+      </div>
+      <form id="loginForm">
+        <input id="loginEmail" type="email" class="auth-input" placeholder="Email" required />
+        <input id="loginPass" type="password" class="auth-input" placeholder="Senha" required />
+        <button type="submit" class="auth-submit">Entrar</button>
+      </form>
+      <form id="regForm" style="display:none">
+        <input id="regEmail" type="email" class="auth-input" placeholder="Email" required />
+        <input id="regPass" type="password" class="auth-input" placeholder="Senha (min 6)" minlength="6" required />
+        <button type="submit" class="auth-submit reg">Criar conta</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <script>
+  // ====== CONFIG API ======
+  const API_BASE_URL = 'http://192.168.195.179:5174';
+
+  // ====== AUTH ======
+  const TOKEN_KEY = 'wplace_token';
+  const getToken = () => localStorage.getItem(TOKEN_KEY);
+  const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
+  const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+  const isLoggedIn = () => !!getToken();
+
+  async function apiRequest(path, { method='GET', body, auth=false } = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (auth && getToken()) headers.Authorization = `Bearer ${getToken()}`;
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      method, headers, body: body ? JSON.stringify(body) : undefined
+    });
+    if (!res.ok) {
+      let detail = '';
+      try { detail = await res.json(); } catch {}
+      throw new Error(`API ${res.status}: ${JSON.stringify(detail)}`);
+    }
+    return res.json();
+  }
+
+  // ====== VARS ======
+  const chunks = {};
+  const loadingChunks = new Set();
+  const previewPixels = {};
+  const undoStack = [];
+  let selectedColor = '#FF4500';
+  let paintingMode = false;
+  let highlightKey = null;
+
+  // Progress
+  let level = parseInt(localStorage.getItem('wplace_level') || '1', 10);
+  let xp = parseInt(localStorage.getItem('wplace_xp') || '0', 10);
+
+  // Moeda/Cap extra
+  let points = 0;
+  let extraCapacity = parseInt(localStorage.getItem('wplace_extra_cap') || '0', 10);
+
+  // Capacidade
+  const BASE_CAPACITY = 30;
+  const CAPACITY_PER_LEVEL = 5;
+  function getMaxPixelsAt(lvl) { return BASE_CAPACITY + (lvl - 1) * CAPACITY_PER_LEVEL; }
+  function getMaxPixels() { return getMaxPixelsAt(level) + (extraCapacity || 0); }
+
+  // XP necessária
+  const XP_MULT_BASE = 1.5;
+  const XP_MULT_GROWTH = 0.05;
+  function xpNeededForLevel(lvl) {
+    const cap = getMaxPixelsAt(lvl);
+    const mult = XP_MULT_BASE + (lvl - 1) * XP_MULT_GROWTH;
+    return Math.ceil(cap * mult);
+  }
+
+  // Tinta e recarga
+  let availablePixels = Math.min(parseInt(localStorage.getItem('wplace_available') || getMaxPixels(), 10), getMaxPixels());
+  const RECHARGE_SECONDS_PER_PIXEL = 5;
+  let rechargeTimer = parseInt(localStorage.getItem('wplace_recharge') || RECHARGE_SECONDS_PER_PIXEL, 10);
+
+  const GRID_PRECISION = 20000;
+  const MIN_ZOOM_TO_LOAD = 16;
+  const MIN_ZOOM_TO_DRAW = 18;
+  const CHUNK_SIZE = 0.01;
+
+  // Estados
+  let isPointerDown = false;
+  let eraserMode = false;
+  let lastPaintedKey = null;
+  const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  let savedMapInteractions = null;
+
+  // Pan com RMB
+  let rmbPanning = false;
+  let rmbLastPoint = null;
+
+  // Borracha
+  let spaceHeld = false;
+  let manualEraser = false;
+
+  // Touch
+  const touchPointers = new Set();
+  let twoFingerPan = false;
+  let isTouchStroke = false;
+  let primaryTouchId = null;
+
+  // ====== MAP VIEW PERSIST ======
+  const DEFAULT_VIEW = { lat: -23.5505, lng: -46.6333, zoom: 19 };
+  const VIEW_KEY = 'wplace_view';
+  function loadSavedView() {
+    try {
+      const raw = localStorage.getItem(VIEW_KEY);
+      if (!raw) return null;
+      const v = JSON.parse(raw);
+      if (!v) return null;
+      if (!isFinite(v.lat) || !isFinite(v.lng) || !isFinite(v.zoom)) return null;
+      return v;
+    } catch { return null; }
+  }
+  function saveViewNow() {
+    if (!map) return;
+    const c = map.getCenter();
+    const v = { lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), zoom: map.getZoom() };
+    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
+  }
+  function throttle(fn, wait) {
+    let last = 0, timer = null;
+    return function(...args) {
+      const now = Date.now();
+      const remain = wait - (now - last);
+      if (remain <= 0) {
+        last = now;
+        if (timer) { clearTimeout(timer); timer = null; }
+        fn.apply(this, args);
+      } else if (!timer) {
+        timer = setTimeout(() => {
+          last = Date.now();
+          timer = null;
+          fn.apply(this, args);
+        }, remain);
+      }
+    };
+  }
+  const saveViewThrottled = throttle(saveViewNow, 300);
+
+  // ====== ELEMENTOS ======
+  const elements = {
+    loading: document.getElementById('loading'),
+    coordsInfo: document.getElementById('coordsInfo'),
+    paintButton: document.getElementById('paintButton'),
+    cancelButton: document.getElementById('cancelButton'),
+    pixelCount: document.getElementById('pixelCount'),
+    timerFill: document.getElementById('timerFill'),
+    colorPalette: document.getElementById('colorPalette'),
+    toggleEraser: document.getElementById('toggleEraser'),
+    mobilePaletteBar: document.getElementById('mobilePaletteBar'),
+    paletteSection: document.getElementById('paletteSection'),
+    levelValue: document.getElementById('levelValue'),
+    xpText: document.getElementById('xpText'),
+    xpFill: document.getElementById('xpFill'),
+    helpFab: document.getElementById('helpFab'),
+    helpModal: document.getElementById('helpModal'),
+    helpClose: document.getElementById('helpClose'),
+    helpCapNow: document.getElementById('helpCapNow'),
+    helpInkNow: document.getElementById('helpInkNow'),
+    helpLevel: document.getElementById('helpLevel'),
+    helpXp: document.getElementById('helpXp'),
+    helpXpNeed: document.getElementById('helpXpNeed'),
+    loginBtn: document.getElementById('loginBtn'),
+    userMenu: document.getElementById('userMenu'),
+    userEmail: document.getElementById('userEmail'),
+    logoutBtn: document.getElementById('logoutBtn'),
+    authModal: document.getElementById('authModal'),
+    authClose: document.getElementById('authClose'),
+    authTabLogin: document.getElementById('authTabLogin'),
+    authTabReg: document.getElementById('authTabReg'),
+    loginForm: document.getElementById('loginForm'),
+    regForm: document.getElementById('regForm'),
+    loginEmail: document.getElementById('loginEmail'),
+    loginPass: document.getElementById('loginPass'),
+    regEmail: document.getElementById('regEmail'),
+    regPass: document.getElementById('regPass'),
+
+    // shop
+    pointsCount: document.getElementById('pointsCount'),
+    userCount: document.getElementById('userCount'),
+    shopFab: document.getElementById('shopFab'),
+    shopModal: document.getElementById('shopModal'),
+    shopClose: document.getElementById('shopClose'),
+    shopPoints: document.getElementById('shopPoints'),
+    shopRefillDesc: document.getElementById('shopRefillDesc'),
+    shopCapDesc: document.getElementById('shopCapDesc'),
+    buyRefillBtn: document.getElementById('buyRefillBtn'),
+    buyCapBtn: document.getElementById('buyCapBtn'),
+  };
+
+  for (const [key, el] of Object.entries(elements)) {
+    if (!el) throw new Error('Elemento faltando: ' + key);
+  }
+
+  // ====== SALVAR / XP ======
+  function saveProgress() {
+    localStorage.setItem('wplace_level', level);
+    localStorage.setItem('wplace_xp', xp);
+    localStorage.setItem('wplace_available', availablePixels);
+    localStorage.setItem('wplace_recharge', rechargeTimer);
+    localStorage.setItem('wplace_extra_cap', extraCapacity);
+  }
+  function addXP(amount) {
+    if (!amount || amount <= 0) return;
+    xp += amount;
+    while (xp >= xpNeededForLevel(level)) {
+      xp -= xpNeededForLevel(level);
+      level++;
+      availablePixels = Math.min(availablePixels, getMaxPixels());
+      showToast(`Level up! Nível ${level} (+5 capacidade) 🎉`, '#6a11cb');
+    }
+    saveProgress();
+    updateUI();
+  }
+
+  // ====== PALETA ======
+  const colors = [
+    '#000000', '#4A4A4A', '#888888', '#C4C4C4', '#E4E4E4', '#FFFFFF',
+    '#FF4500', '#FF6B35', '#FF8C42', '#FFA552', '#FFBE0B', '#FFDD3F',
+    '#8AC926', '#52CA58', '#40916C', '#2D6A4F', '#1B4332', '#081C15',
+    '#277DA1', '#4D94FF', '#7209B7', '#A663CC', '#F72585', '#B5179E',
+    '#DC2F02', '#E85D04', '#F48C06', '#FAA307', '#FFBA08', '#FFD60A',
+    '#003566', '#001D3D', '#FFD166', '#F77F00', '#FCBF49', '#EAE2B7'
+  ];
+  function createColorPalette() {
+    elements.colorPalette.innerHTML = '';
+    colors.forEach(color => {
+      const swatch = document.createElement('div');
+      swatch.className = 'color-swatch';
+      swatch.style.backgroundColor = color;
+      swatch.dataset.color = color;
+      if (color === selectedColor) swatch.classList.add('selected');
+      swatch.addEventListener('click', () => {
+        selectedColor = color;
+        document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+        swatch.classList.add('selected');
+      });
+      elements.colorPalette.appendChild(swatch);
+    });
+  }
+
+  // ====== AJUDA ======
+  function updateHelpStats() {
+    const max = getMaxPixels();
+    elements.helpCapNow.textContent = max;
+    elements.helpInkNow.textContent = availablePixels;
+    elements.helpLevel.textContent = level;
+    elements.helpXp.textContent = xp;
+    elements.helpXpNeed.textContent = xpNeededForLevel(level);
+  }
+  function openHelp() { elements.helpModal.style.display = 'block'; elements.helpModal.setAttribute('aria-hidden', 'false'); }
+  function closeHelp() { elements.helpModal.style.display = 'none'; elements.helpModal.setAttribute('aria-hidden', 'true'); }
+  elements.helpFab.addEventListener('click', openHelp);
+  elements.helpClose.addEventListener('click', closeHelp);
+  elements.helpModal.addEventListener('click', (e) => { if (e.target === elements.helpModal) closeHelp(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
+
+  // ====== POSICIONAR FABs ======
+  function positionHelpFab() {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    const headerH = document.getElementById('header').offsetHeight || 60;
+    let topPx = headerH + 12;
+    if (isMobile) {
+      const paletteVisible = elements.mobilePaletteBar.style.display !== 'none';
+      if (paletteVisible) topPx += elements.mobilePaletteBar.offsetHeight || 0;
+    }
+    elements.helpFab.style.top = topPx + 'px';
+    elements.helpFab.style.left = '16px';
+    elements.helpFab.style.right = 'auto';
+    elements.helpFab.style.bottom = 'auto';
+
+    const gap = 12;
+    const helpH = elements.helpFab.offsetHeight || 48;
+    elements.shopFab.style.top = (topPx + helpH + gap) + 'px';
+    elements.shopFab.style.left = '16px';
+    elements.shopFab.style.right = 'auto';
+    elements.shopFab.style.bottom = 'auto';
+  }
+
+  // ====== UI ======
+  function updateUI() {
+    const max = getMaxPixels();
+    elements.pixelCount.textContent = `${availablePixels}/${max}`;
+    if (availablePixels < max) {
+      const progress = (RECHARGE_SECONDS_PER_PIXEL - rechargeTimer) / RECHARGE_SECONDS_PER_PIXEL;
+      elements.timerFill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
+    } else {
+      elements.timerFill.style.width = '100%';
+    }
+
+    elements.levelValue.textContent = level;
+    const need = xpNeededForLevel(level);
+    elements.xpText.textContent = `${xp}/${need} XP`;
+    elements.xpFill.style.width = `${Math.max(0, Math.min(1, xp / need)) * 100}%`;
+
+    const previewCount = Object.keys(previewPixels).length;
+
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    elements.mobilePaletteBar.style.display = (isMobile && paintingMode) ? 'block' : 'none';
+
+    if (paintingMode) {
+      if (previewCount > 0) {
+        elements.paintButton.textContent = `Confirmar ${previewCount} pixel${previewCount !== 1 ? 's' : ''}`;
+        elements.paintButton.style.background = '#28a745';
+      } else {
+        elements.paintButton.textContent = 'Modo Desenho Ativo';
+        elements.paintButton.style.background = '#ffc107';
+      }
+      elements.cancelButton.style.display = 'block';
+      elements.toggleEraser.style.display = 'block';
+      map.getContainer().style.cursor = 'crosshair';
+    } else {
+      elements.paintButton.style.background = 'linear-gradient(135deg, #ff4500, #ff6b35)';
+      elements.cancelButton.style.display = 'none';
+      elements.toggleEraser.style.display = 'none';
+      map.getContainer().style.cursor = '';
+      if (availablePixels > 0 && map.getZoom() >= MIN_ZOOM_TO_DRAW) {
+        elements.paintButton.disabled = false;
+        elements.paintButton.textContent = 'Começar a Desenhar';
+      } else {
+        elements.paintButton.disabled = true;
+        if (availablePixels <= 0) elements.paintButton.textContent = `Aguarde ${rechargeTimer}s`;
+        else if (map.getZoom() < MIN_ZOOM_TO_DRAW) elements.paintButton.textContent = `Zoom ${MIN_ZOOM_TO_DRAW}+ para desenhar`;
+      }
+    }
+
+    if (isLoggedIn()) {
+      elements.userMenu.style.display = 'flex';
+      elements.loginBtn.style.display = 'none';
+    } else {
+      elements.userMenu.style.display = 'none';
+      elements.loginBtn.style.display = 'inline-block';
+    }
+
+    elements.pointsCount.textContent = points;
+    if (elements.shopModal.style.display === 'block') updateShopUI();
+
+    updateHelpStats();
+    positionHelpFab();
+  }
+
+  // ====== HELPERS ======
+  function snappedKeyFromLatLng(latlng) {
+    const lat = Math.round(latlng.lat * GRID_PRECISION) / GRID_PRECISION;
+    const lng = Math.round(latlng.lng * GRID_PRECISION) / GRID_PRECISION;
+    return `${lat},${lng}`;
+  }
+
+  function showToast(msg, bg = '#28a745') {
+    const notification = document.createElement('div');
+    notification.textContent = msg;
+    notification.style.cssText = `
+      position: fixed; top: 80px; right: 20px; background: ${bg}; color: white;
+      padding: 10px 14px; border-radius: 8px; z-index: 1001;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15); font-size: 13px;
+    `;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 2200);
+  }
+
+  function addClickEffect(point, color) {
+    const addEffect = document.createElement('div');
+    addEffect.style.cssText = `
+      position: fixed; left: ${point.x}px; top: ${point.y}px; width: 14px; height: 14px;
+      background: ${color}; border: 2px dashed white; border-radius: 2px; transform: translate(-50%, -50%);
+      z-index: 999; animation: clickPulse 0.45s ease-out forwards; pointer-events: none;
+    `;
+    document.body.appendChild(addEffect);
+    setTimeout(() => addEffect.remove(), 450);
+  }
+  function addEraseEffect(point) {
+    const eraseEffect = document.createElement('div');
+    eraseEffect.style.cssText = `
+      position: fixed; left: ${point.x}px; top: ${point.y}px; width: 20px; height: 20px;
+      background: #dc3545; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%);
+      z-index: 999; animation: eraseEffect 0.35s ease-out forwards; pointer-events: none; display:flex;align-items:center;justify-content:center;
+      color:#fff;font-size:11px;font-weight:bold;
+    `;
+    eraseEffect.innerHTML = '✕';
+    document.body.appendChild(eraseEffect);
+    setTimeout(() => eraseEffect.remove(), 350);
+  }
+
+  function disableMapInteractions() {
+    if (savedMapInteractions) return;
+    savedMapInteractions = {
+      dragging: map.dragging.enabled(),
+      boxZoom: map.boxZoom.enabled(),
+      scrollWheelZoom: map.scrollWheelZoom.enabled(),
+      touchZoom: map.touchZoom.enabled(),
+      keyboard: map.keyboard.enabled(),
+    };
+    if (savedMapInteractions.dragging) map.dragging.disable();
+    if (savedMapInteractions.boxZoom) map.boxZoom.disable();
+    if (savedMapInteractions.scrollWheelZoom) map.scrollWheelZoom.disable();
+    if (savedMapInteractions.touchZoom) map.touchZoom.disable();
+    if (savedMapInteractions.keyboard) map.keyboard.disable();
+    map.getContainer().style.touchAction = 'none';
+  }
+  function enableMapInteractions() {
+    if (!savedMapInteractions) { map.getContainer().style.touchAction = ''; return; }
+    if (savedMapInteractions.dragging) map.dragging.enable();
+    if (savedMapInteractions.boxZoom) map.boxZoom.enable();
+    if (savedMapInteractions.scrollWheelZoom) map.scrollWheelZoom.enable();
+    if (savedMapInteractions.touchZoom) map.touchZoom.enable();
+    if (savedMapInteractions.keyboard) map.keyboard.enable();
+    map.getContainer().style.touchAction = '';
+    savedMapInteractions = null;
+  }
+
+  function canDrawHere() { return paintingMode && map.getZoom() >= MIN_ZOOM_TO_DRAW; }
+
+  function tryAddOrEraseAt(latlng, erase, containerPoint) {
+    const key = snappedKeyFromLatLng(latlng);
+    if (lastPaintedKey === key) return;
+    lastPaintedKey = key;
+
+    if (erase) {
+      if (previewPixels[key]) {
+        delete previewPixels[key];
+        if (containerPoint) addEraseEffect(containerPoint);
+      }
+    } else {
+      const previewCount = Object.keys(previewPixels).length;
+      if (!previewPixels[key]) {
+        if (previewCount + 1 > availablePixels) return;
+        previewPixels[key] = selectedColor;
+        if (containerPoint) addClickEffect(containerPoint, selectedColor);
+      }
+    }
+    updateUI();
+    requestRedraw();
+  }
+
+  // ====== MAPA ======
+  const worldBounds = L.latLngBounds(L.latLng(-90, -180), L.latLng(90, 180));
+
+  const savedView = loadSavedView();
+  const map = L.map('map', {
+    doubleClickZoom: false,
+    worldCopyJump: false,
+    maxBounds: worldBounds,
+    maxBoundsViscosity: 1.0,
+    minZoom: 3,
+    maxZoom: 22,
+    zoomControl: false
+  });
+
+  // Inicializa view com salvo ou padrão
+  if (savedView) {
+    map.setView([savedView.lat, savedView.lng], savedView.zoom, { animate: false });
+  } else {
+    map.setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom, { animate: false });
+  }
+
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 22
+  }).addTo(map);
+
+  // Persistir view nos eventos
+  map.on('moveend zoomend', saveViewThrottled);
+  window.addEventListener('beforeunload', saveViewNow);
+
+  // ====== CAMADA DE PIXELS ======
+  const L_PixelLayer = L.Layer.extend({
+    onAdd: function (map) {
+      this._map = map;
+      this._canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated');
+      this._canvas.id = 'pixelCanvas';
+      this._ctx = this._canvas.getContext('2d');
+      map.getPanes().overlayPane.appendChild(this._canvas);
+
+      map.on('moveend', this._reset, this);
+      map.on('zoom', this._reset, this);
+      map.on('zoomanim', this._onAnimZoom, this);
+      this._reset();
+    },
+    onRemove: function (map) {
+      L.DomUtil.remove(this._canvas);
+      map.off('moveend', this._reset, this);
+      map.off('zoom', this._reset, this);
+      map.off('zoomanim', this._onAnimZoom, this);
+    },
+    _onAnimZoom: function (e) {
+      const scale = this._map.getZoomScale(e.zoom);
+      const offset = this._map._latLngToNewLayerPoint(this._map.getBounds().getNorthWest(), e.zoom, e.center);
+      L.DomUtil.setTransform(this._canvas, offset, scale);
+    },
+    _reset: function () {
+      if (this._map._animatingZoom) return;
+      const topLeft = this._map.containerPointToLayerPoint([0, 0]);
+      L.DomUtil.setPosition(this._canvas, topLeft);
+      const size = this._map.getSize();
+      this._canvas.width = size.x;
+      this._canvas.height = size.y;
+      if (this._ctx.imageSmoothingEnabled) this._ctx.imageSmoothingEnabled = false;
+      this._redraw();
+    },
+    _redraw: function () {
+      this._ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+      if (this._map.getZoom() < MIN_ZOOM_TO_LOAD) return;
+      const bounds = this._map.getBounds();
+
+      const keyToRect = (key) => {
+        const [plat, plng] = key.split(',').map(Number);
+        const half = 1 / GRID_PRECISION / 2;
+        const p1 = this._map.latLngToContainerPoint(L.latLng(plat + half, plng - half));
+        const p2 = this._map.latLngToContainerPoint(L.latLng(plat - half, plng + half));
+        return {
+          x: Math.round(p1.x), y: Math.round(p1.y),
+          w: Math.max(1, Math.round(p2.x - p1.x)),
+          h: Math.max(1, Math.round(p2.y - p1.y))
+        };
+      };
+
+      const drawPixel = (key, color, opacity = 1) => {
+        const [plat, plng] = key.split(',').map(Number);
+        if (!bounds.contains(L.latLng(plat, plng))) return;
+        const { x, y, w, h } = keyToRect(key);
+        this._ctx.globalAlpha = opacity;
+        this._ctx.fillStyle = color;
+        this._ctx.fillRect(x, y, w, h);
+        if (opacity < 1) {
+          this._ctx.strokeStyle = color;
+          this._ctx.lineWidth = 1;
+          this._ctx.setLineDash([2, 2]);
+          this._ctx.strokeRect(x, y, w, h);
+          this._ctx.setLineDash([]);
+        }
+        this._ctx.globalAlpha = 1;
+      };
+
+      const drawHighlight = (key) => {
+        if (!key) return;
+        const { x, y, w, h } = keyToRect(key);
+        this._ctx.save();
+        this._ctx.globalAlpha = 0.15;
+        this._ctx.fillStyle = '#000';
+        this._ctx.fillRect(x, y, w, h);
+        this._ctx.globalAlpha = 1;
+        this._ctx.strokeStyle = '#ffffff';
+        this._ctx.lineWidth = 1.5;
+        this._ctx.setLineDash([4, 2]);
+        this._ctx.strokeRect(x, y, w, h);
+        this._ctx.restore();
+      };
+
+      const northWest = bounds.getNorthWest();
+      const southEast = bounds.getSouthEast();
+      for (let lat = southEast.lat - CHUNK_SIZE; lat <= northWest.lat + CHUNK_SIZE; lat += CHUNK_SIZE) {
+        for (let lng = northWest.lng - CHUNK_SIZE; lng <= southEast.lng + CHUNK_SIZE; lng += CHUNK_SIZE) {
+          const chunkKey = getChunkKey(lat, lng);
+          if (!chunks[chunkKey] && !loadingChunks.has(chunkKey)) {
+            loadChunk(chunkKey);
+          }
+          const chunk = chunks[chunkKey];
+          if (!chunk) continue;
+          for (const key in chunk) drawPixel(key, chunk[key], 1.0);
+        }
+      }
+
+      for (const key in previewPixels) drawPixel(key, previewPixels[key], 0.7);
+      if (paintingMode && this._map.getZoom() >= MIN_ZOOM_TO_DRAW) drawHighlight(highlightKey);
+    }
+  });
+  const pixelLayer = new L_PixelLayer().addTo(map);
+
+  let rafId = null;
+  function requestRedraw() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => { rafId = null; pixelLayer && pixelLayer._redraw(); });
+  }
+
+  // ====== STORAGE POR CHUNK (API) ======
+  function getChunkKey(lat, lng) {
+    const chunkLat = Math.floor(lat / CHUNK_SIZE);
+    const chunkLng = Math.floor(lng / CHUNK_SIZE);
+    return `${chunkLat},${chunkLng}`;
+  }
+
+  async function loadChunk(key) {
+    if (chunks[key] || loadingChunks.has(key)) return;
+    loadingChunks.add(key);
+    try {
+      const data = await fetch(`${API_BASE_URL}/chunk/${encodeURIComponent(key)}`).then(r => r.json());
+      chunks[key] = data?.pixels || {};
+    } catch (e) {
+      console.error('Falha ao carregar chunk do servidor', key, e);
+      chunks[key] = {};
+    } finally {
+      loadingChunks.delete(key);
+      if (typeof requestRedraw === 'function') requestRedraw();
+    }
+  }
+
+  // ====== EVENTOS ======
+  map.on('moveend zoomend', updateUI);
+
+  let lastHighlightKey = null;
+  map.on('mousemove', (e) => {
+    elements.coordsInfo.textContent = `Lat: ${e.latlng.lat.toFixed(5)}, Lng: ${e.latlng.lng.toFixed(5)}`;
+    if (paintingMode && map.getZoom() >= MIN_ZOOM_TO_DRAW) {
+      const key = snappedKeyFromLatLng(e.latlng);
+      highlightKey = key;
+      if (lastHighlightKey !== key) { lastHighlightKey = key; requestRedraw(); }
+    } else if (highlightKey) {
+      highlightKey = null;
+      if (lastHighlightKey !== null) { lastHighlightKey = null; requestRedraw(); }
+    }
+  });
+
+  const container = map.getContainer();
+
+  container.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') {
+      touchPointers.add(e.pointerId);
+      if (paintingMode && touchPointers.size >= 2) {
+        twoFingerPan = true;
+        if (isPointerDown) endPointer(e);
+        enableMapInteractions();
+      }
+    }
+  }, { passive: true });
+  const removeTouchPointer = (e) => {
+    if (e.pointerType === 'touch') { touchPointers.delete(e.pointerId); if (touchPointers.size < 2) twoFingerPan = false; }
+  };
+  container.addEventListener('pointerup', removeTouchPointer, { passive: true });
+  container.addEventListener('pointercancel', removeTouchPointer, { passive: true });
+  container.addEventListener('lostpointercapture', removeTouchPointer);
+
+  container.addEventListener('pointerdown', (e) => {
+    if (e.button !== 2) return;
+    rmbPanning = true;
+    rmbLastPoint = map.mouseEventToContainerPoint(e);
+    container.setPointerCapture?.(e.pointerId);
+    container.style.cursor = 'grabbing';
+    e.preventDefault(); e.stopPropagation();
+  }, { passive: false });
+  container.addEventListener('pointermove', (e) => {
+    if (!rmbPanning) return;
+    const cp = map.mouseEventToContainerPoint(e);
+    const dx = cp.x - rmbLastPoint.x;
+    const dy = cp.y - rmbLastPoint.y;
+    if (dx || dy) { map.panBy([-dx, -dy], { animate: false }); rmbLastPoint = cp; }
+    e.preventDefault(); e.stopPropagation();
+  }, { passive: false });
+  function endRmb(e) {
+    if (!rmbPanning) return;
+    rmbPanning = false; rmbLastPoint = null;
+    container.releasePointerCapture?.(e.pointerId);
+    container.style.cursor = paintingMode ? 'crosshair' : '';
+  }
+  container.addEventListener('pointerup', endRmb, { passive: false });
+  container.addEventListener('pointercancel', endRmb, { passive: false });
+  container.addEventListener('lostpointercapture', endRmb);
+  container.addEventListener('contextmenu', (e) => e.preventDefault(), { passive: false });
+
+  container.addEventListener('pointerdown', (e) => {
+    if (!canDrawHere()) return;
+    if (e.button !== 0) return;
+    if (e.pointerType === 'touch' && touchPointers.size >= 2) return;
+
+    isPointerDown = true; lastPaintedKey = null;
+    disableMapInteractions(); container.setPointerCapture?.(e.pointerId);
+
+    if (e.pointerType === 'touch') {
+      isTouchStroke = true; primaryTouchId = e.pointerId;
+    } else {
+      const erase = eraserMode || e.ctrlKey || e.metaKey;
+      const latlng = map.mouseEventToLatLng(e);
+      const cp = map.mouseEventToContainerPoint(e);
+      tryAddOrEraseAt(latlng, erase, cp);
+    }
+    e.preventDefault(); e.stopPropagation();
+  }, { passive: false });
+  container.addEventListener('pointermove', (e) => {
+    if (twoFingerPan || !isPointerDown) return;
+    const latlng = map.mouseEventToLatLng(e);
+    const cp = map.mouseEventToContainerPoint(e);
+    const erase = eraserMode;
+    if (e.pointerType === 'touch') {
+      if (!isTouchStroke || e.pointerId !== primaryTouchId) return;
+      tryAddOrEraseAt(latlng, erase, cp);
+    } else {
+      tryAddOrEraseAt(latlng, erase, cp);
+    }
+    e.preventDefault(); e.stopPropagation();
+  }, { passive: false });
+  function endPointer(e) {
+    if (!isPointerDown) return;
+    isPointerDown = false; isTouchStroke = false; primaryTouchId = null; lastPaintedKey = null;
+    enableMapInteractions(); container.releasePointerCapture?.(e.pointerId);
+  }
+  container.addEventListener('pointerup', endPointer, { passive: false });
+  container.addEventListener('pointercancel', endPointer, { passive: false });
+  container.addEventListener('lostpointercapture', endPointer);
+
+  function syncEraserUI() {
+    elements.toggleEraser.classList.toggle('on', eraserMode);
+    elements.toggleEraser.innerHTML = eraserMode ? '🧽 Borracha: ON' : '🧽 Borracha: OFF';
+  }
+  function resetEraser() { spaceHeld = false; manualEraser = false; eraserMode = false; syncEraserUI(); }
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { if (spaceHeld) return; spaceHeld = true; eraserMode = true; syncEraserUI(); e.preventDefault(); }
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') { spaceHeld = false; eraserMode = manualEraser; syncEraserUI(); e.preventDefault(); }
+  });
+  elements.toggleEraser.addEventListener('click', () => { manualEraser = !manualEraser; eraserMode = manualEraser || spaceHeld; syncEraserUI(); });
+
+  // ====== LOJA ======
+  const SHOP_REFILL_AMOUNT = 5;
+  const SHOP_REFILL_COST = 5;
+  const SHOP_CAPACITY_STEP = 5;
+  const SHOP_CAPACITY_COST = 25;
+
+  function openShop() {
+    elements.shopModal.style.display = 'block';
+    elements.shopModal.setAttribute('aria-hidden', 'false');
+    updateShopUI();
+  }
+  function closeShop() {
+    elements.shopModal.style.display = 'none';
+    elements.shopModal.setAttribute('aria-hidden', 'true');
+  }
+  function updateShopUI() {
+    if (!elements.shopModal || elements.shopModal.style.display !== 'block') return;
+    elements.shopPoints.textContent = points;
+    elements.pointsCount.textContent = points;
+    elements.shopRefillDesc.textContent = `Adiciona +${SHOP_REFILL_AMOUNT} pixels agora. Custa ${SHOP_REFILL_COST} ponto${SHOP_REFILL_COST > 1 ? 's' : ''}.`;
+    elements.shopCapDesc.textContent = `Aumenta permanentemente seu limite em +${SHOP_CAPACITY_STEP}. Custa ${SHOP_CAPACITY_COST} ponto${SHOP_CAPACITY_COST > 1 ? 's' : ''}.`;
+    const atMax = availablePixels >= getMaxPixels();
+    const canBuy = isLoggedIn();
+    elements.buyRefillBtn.disabled = !canBuy || points < SHOP_REFILL_COST || atMax;
+    elements.buyCapBtn.disabled = !canBuy || points < SHOP_CAPACITY_COST;
+  }
+  async function buyRefill() {
+    try {
+      const res = await apiRequest('/shop/refill', { method:'POST', auth:true });
+      const amount = res.amount ?? SHOP_REFILL_AMOUNT;
+      points = res.points ?? points;
+      availablePixels = Math.min(getMaxPixels(), availablePixels + amount);
+      saveProgress();
+      updateUI();
+      updateShopUI();
+      showToast(`+${amount} de tinta adicionada!`, '#00b894');
+    } catch (e) {
+      alert('Não foi possível comprar tinta.');
+      console.error(e);
+    }
+  }
+  async function buyCapacity() {
+    try {
+      const res = await apiRequest('/shop/capacity', { method:'POST', auth:true });
+      points = res.points ?? points;
+      if (typeof res.extra_capacity === 'number') {
+        extraCapacity = res.extra_capacity;
+      }
+      availablePixels = Math.min(availablePixels, getMaxPixels());
+      saveProgress();
+      updateUI();
+      updateShopUI();
+      showToast(`Limite aumentado em +${SHOP_CAPACITY_STEP}! 🎯`, '#6a11cb');
+    } catch (e) {
+      alert('Não foi possível aumentar o limite.');
+      console.error(e);
+    }
+  }
+  elements.shopFab.addEventListener('click', openShop);
+  elements.shopClose.addEventListener('click', closeShop);
+  elements.shopModal.addEventListener('click', (e) => { if (e.target === elements.shopModal) closeShop(); });
+  elements.buyRefillBtn.addEventListener('click', buyRefill);
+  elements.buyCapBtn.addEventListener('click', buyCapacity);
+
+  // ====== PAINT BTN ======
+  elements.paintButton.addEventListener('click', async () => {
+    if (!paintingMode) {
+      if (availablePixels <= 0 || map.getZoom() < MIN_ZOOM_TO_DRAW) return;
+      paintingMode = true;
+    } else {
+      const keys = Object.keys(previewPixels);
+      const previewCount = keys.length;
+      if (previewCount === 0) return;
+      if (!isLoggedIn()) { alert('Entre para confirmar pixels.'); return; }
+      if (availablePixels < previewCount) { alert(`Você precisa de ${previewCount} pixels disponíveis!`); return; }
+
+      const payload = { pixels: keys.map(k => ({ key: k, color: previewPixels[k] })) };
+      try {
+        const res = await apiRequest('/commit', { method:'POST', body: payload, auth: true });
+        keys.forEach((key) => {
+          const [lat, lng] = key.split(',').map(Number);
+          const ck = getChunkKey(lat, lng);
+          chunks[ck] ||= {};
+          chunks[ck][key] = previewPixels[key];
+          delete previewPixels[key];
+          availablePixels--;
+        });
+
+        if (typeof res.level === 'number') level = res.level;
+        if (typeof res.xp === 'number') xp = res.xp;
+        if (typeof res.points === 'number') points = res.points;
+        if (typeof res.extra_capacity === 'number') extraCapacity = res.extra_capacity;
+
+        paintingMode = false;
+        resetEraser();
+        const confirmed = typeof res.count === 'number' ? res.count : previewCount;
+        showToast(`${confirmed} pixel${confirmed !== 1 ? 's' : ''} confirmado${confirmed !== 1 ? 's' : ''}! 🎨`, '#28a745');
+        enableMapInteractions();
+      } catch (err) {
+        alert('Falha ao confirmar pixels no servidor.');
+        console.error(err);
+      }
+    }
+    saveProgress();
+    updateUI();
+    requestRedraw();
+  });
+
+  elements.cancelButton.addEventListener('click', () => {
+    for (const key in previewPixels) delete previewPixels[key];
+    paintingMode = false;
+    resetEraser();
+    enableMapInteractions();
+    updateUI();
+    requestRedraw();
+  });
+
+  // ====== RECARGA ======
+  setInterval(() => {
+    const max = getMaxPixels();
+    if (availablePixels < max) {
+      rechargeTimer--;
+      if (rechargeTimer <= 0) {
+        availablePixels = Math.min(max, availablePixels + 1);
+        rechargeTimer = RECHARGE_SECONDS_PER_PIXEL;
+      }
+      saveProgress();
+      updateUI();
+    } else {
+      if (rechargeTimer !== RECHARGE_SECONDS_PER_PIXEL) {
+        rechargeTimer = RECHARGE_SECONDS_PER_PIXEL;
+        saveProgress();
+      }
+    }
+  }, 1000);
+
+  // ====== Paleta mobile ======
+  function updatePalettePlacement() {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    if (isMobile) {
+      if (!elements.mobilePaletteBar.contains(elements.colorPalette)) {
+        elements.mobilePaletteBar.appendChild(elements.colorPalette);
+      }
+    } else {
+      if (!elements.paletteSection.contains(elements.colorPalette)) {
+        elements.paletteSection.appendChild(elements.colorPalette);
+      }
+    }
+  }
+
+  // ====== AUTH UI ======
+  function openAuth() { elements.authModal.style.display = 'flex'; }
+  function closeAuth() { elements.authModal.style.display = 'none'; }
+  elements.authClose.addEventListener('click', closeAuth);
+  elements.authModal.addEventListener('click', (e) => { if (e.target === elements.authModal) closeAuth(); });
+
+  elements.authTabLogin.addEventListener('click', () => {
+    elements.authTabLogin.classList.add('active'); elements.authTabReg.classList.remove('active');
+    elements.loginForm.style.display = 'block'; elements.regForm.style.display = 'none';
+  });
+  elements.authTabReg.addEventListener('click', () => {
+    elements.authTabReg.classList.add('active'); elements.authTabLogin.classList.remove('active');
+    elements.loginForm.style.display = 'none'; elements.regForm.style.display = 'block';
+  });
+
+  elements.loginBtn.addEventListener('click', openAuth);
+
+  elements.loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const email = elements.loginEmail.value.trim();
+      const password = elements.loginPass.value;
+      const { token } = await apiRequest('/auth/login', { method:'POST', body:{ email, password } });
+      setToken(token);
+      elements.userEmail.textContent = email;
+      elements.userMenu.style.display = 'flex';
+      elements.loginBtn.style.display = 'none';
+      closeAuth();
+      await fetchMe();
+      updateUI();
+    } catch (err) { alert('Falha no login'); console.error(err); }
+  });
+
+  elements.regForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const email = elements.regEmail.value.trim();
+      const password = elements.regPass.value;
+      const { token } = await apiRequest('/auth/register', { method:'POST', body:{ email, password } });
+      setToken(token);
+      elements.userEmail.textContent = email;
+      elements.userMenu.style.display = 'flex';
+      elements.loginBtn.style.display = 'none';
+      closeAuth();
+      await fetchMe();
+      updateUI();
+    } catch (err) { alert('Falha no registro'); console.error(err); }
+  });
+
+  elements.logoutBtn.addEventListener('click', () => {
+    clearToken();
+    elements.userEmail.textContent = '';
+    elements.userMenu.style.display = 'none';
+    elements.loginBtn.style.display = 'inline-block';
+    points = 0;
+    updateUI();
+  });
+
+  async function fetchMe() {
+    if (!isLoggedIn()) return;
+    try {
+      const me = await apiRequest('/auth/me', { auth: true });
+      if (me?.email) elements.userEmail.textContent = me.email;
+      if (me?.progress) {
+        level = me.progress.level ?? level;
+        xp = me.progress.xp ?? xp;
+        points = me.progress.points ?? points;
+        extraCapacity = me.progress.extra_capacity ?? extraCapacity;
+        saveProgress();
+      }
+      elements.userMenu.style.display = 'flex';
+      elements.loginBtn.style.display = 'none';
+      updateUI();
+    } catch (e) {
+      clearToken();
+    }
+  }
+
+  // ====== PRESENÇA (online) ======
+  function initPresence() {
+    // valor inicial
+    fetch(`${API_BASE_URL}/presence`)
+      .then(r => r.json())
+      .then(d => { if (d && typeof d.online === 'number') elements.userCount.textContent = d.online; })
+      .catch(() => {});
+    // SSE
+    const es = new EventSource(`${API_BASE_URL}/presence/stream`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data || '{}');
+        if (typeof data.online === 'number') elements.userCount.textContent = data.online;
+      } catch {}
+    };
+    es.onerror = () => {
+      try { es.close(); } catch {}
+      setTimeout(initPresence, 2000);
+    };
+    window._presenceES = es;
+  }
+
+  // ====== INIT ======
+  function init() {
+    availablePixels = Math.min(availablePixels, getMaxPixels());
+    createColorPalette();
+    syncEraserUI();
+    updatePalettePlacement();
+    updateUI();
+    requestRedraw();
+    setTimeout(() => { elements.loading.style.display = 'none'; }, 500);
+    initPresence();
+  }
+
+  map.whenReady(() => {
+    window.addEventListener('resize', () => {
+      map.invalidateSize({ pan: false });
+      updatePalettePlacement();
+      positionHelpFab();
+    });
+    init();
+    fetchMe();
+  });
+  </script>
+</body>
+</html>
